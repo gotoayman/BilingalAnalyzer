@@ -1,0 +1,928 @@
+<html><head><base href="." />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qatar University Grade Analyzer</title>
+
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600&family=Tajawal:wght@400;500&display=swap" rel="stylesheet">
+
+<!-- ChartJS -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- jsPDF for PDF generation -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<!-- XLSX.js for Excel parsing -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+:root {
+  --primary-color: #8A1538; /* Qatar University maroon */
+  --text-color: #333;
+  --success-color: #28a745;
+  --warning-color: #ffc107;
+  --danger-color: #dc3545;
+  --gray-color: #6c757d;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Tajawal', sans-serif;
+  line-height: 1.6;
+  color: var(--text-color);
+}
+
+.rtl {
+  direction: rtl;
+}
+
+h1, h2, h3, h4 {
+  font-family: 'Cairo', sans-serif;
+  color: var(--primary-color);
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+}
+
+.logo {
+  width: 200px;
+}
+
+.language-toggle {
+  padding: 8px 16px;
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'Cairo', sans-serif;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+
+.form-control {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.grades-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+  margin-bottom: 30px;
+}
+
+.grade-table {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 15px;
+}
+
+.grade-table.high { background-color: rgba(40, 167, 69, 0.1); }
+.grade-table.moderate { background-color: rgba(255, 193, 7, 0.1); }
+.grade-table.low { background-color: rgba(220, 53, 69, 0.1); }
+.grade-table.absence { background-color: rgba(108, 117, 125, 0.1); }
+
+.chart-container {
+  margin: 30px 0;
+  height: 400px;
+}
+
+.alert {
+  padding: 15px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
+
+.alert-success { background-color: rgba(40, 167, 69, 0.1); }
+.alert-warning { background-color: rgba(255, 193, 7, 0.1); }
+.alert-danger { background-color: rgba(220, 53, 69, 0.1); }
+
+.footer {
+  text-align: center;
+  padding: 20px;
+  margin-top: 50px;
+  border-top: 1px solid #ddd;
+}
+
+.inflation-analysis {
+  margin: 20px 0;
+  padding: 20px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.btn {
+  padding: 8px 16px;
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin: 0 5px;
+}
+
+.btn:hover {
+  opacity: 0.9;
+}
+
+textarea.form-control {
+  min-height: 100px;
+  resize: vertical;
+}
+
+@media (max-width: 768px) {
+  .grades-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+</head>
+<body>
+<div class="container" id="app">
+  <div class="header">
+    <svg class="logo" viewBox="0 0 200 100">
+      <path d="M20,50 Q50,20 80,50 T140,50" fill="none" stroke="#8A1538" stroke-width="3"/>
+      <text x="50" y="70" font-family="Cairo" fill="#8A1538">Qatar University</text>
+    </svg>
+    <button class="language-toggle" onclick="toggleLanguage()">
+      <span id="langText">العربية</span>
+    </button>
+  </div>
+
+  <div id="mainContent">
+    <!-- Content will be populated by JavaScript -->
+  </div>
+
+  <div id="footer" class="footer"></div>
+</div>
+
+<script>
+// State management
+const state = {
+  language: 'en',
+  courseData: {
+    name: '',
+    code: '',
+    section: '',
+    semester: '',
+    year: new Date().getFullYear()
+  },
+  grades: [],
+  comments: ''
+};
+
+// Make gradeChart accessible globally
+let gradeChart = null;
+
+// Update the grade distribution chart
+function updateChart() {
+  try {
+    const canvas = document.getElementById('gradeChart');
+    if (!canvas) {
+      console.warn('Chart canvas not found');
+      return;
+    }
+
+    if (gradeChart) {
+      gradeChart.destroy();
+    }
+
+    const ctx = canvas.getContext('2d');
+    const t = translations[state.language];
+
+    // Define all possible grades in order
+    const allGrades = ['A', 'B+', 'B', 'C+', 'C', 'D+', 'D', 'F', 'FA', 'FB', 'I', 'AV'];
+    
+    // Count occurrences of each grade
+    const gradeCounts = allGrades.map(grade => {
+      return state.grades.filter(g => g.toUpperCase() === grade).length;
+    });
+
+    // Define colors for different grade categories
+    const colors = allGrades.map(grade => {
+      if (['A', 'B+', 'B'].includes(grade)) return 'rgba(40, 167, 69, 0.6)';  // Green for high grades
+      if (['C+', 'C'].includes(grade)) return 'rgba(255, 193, 7, 0.6)';       // Yellow for moderate grades
+      if (['D+', 'D', 'F'].includes(grade)) return 'rgba(220, 53, 69, 0.6)';  // Red for low grades
+      return 'rgba(108, 117, 125, 0.6)';                                      // Gray for absence/incomplete
+    });
+
+    // Create new chart
+    gradeChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: allGrades,
+        datasets: [{
+          label: t.gradeAnalysis,
+          data: gradeCounts,
+          backgroundColor: colors,
+          borderColor: colors.map(color => color.replace('0.6', '1')),
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false
+          },
+          title: {
+            display: true,
+            text: t.gradeAnalysis,
+            font: {
+              family: 'Cairo',
+              size: 16
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: t.count,
+              font: {
+                family: 'Tajawal'
+              }
+            },
+            ticks: {
+              stepSize: 1
+            }
+          },
+          x: {
+            title: {
+              display: true,
+              text: t.grade,
+              font: {
+                family: 'Tajawal'
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Update canvas direction based on language
+    canvas.dir = state.language === 'ar' ? 'rtl' : 'ltr';
+  } catch (err) {
+    console.error('Error updating chart:', err);
+    showAlert('error', 'Error updating grade chart');
+  }
+}
+
+// Update showAlert function
+function showAlert(type, message) {
+  const alertDiv = document.createElement('div');
+  alertDiv.className = `alert alert-${type}`;
+  alertDiv.textContent = message;
+  
+  const mainContent = document.getElementById('mainContent');
+  if (!mainContent) return;
+  
+  const firstChild = mainContent.firstChild;
+  if (firstChild) {
+    mainContent.insertBefore(alertDiv, firstChild);
+  } else {
+    mainContent.appendChild(alertDiv);
+  }
+  
+  setTimeout(() => {
+    if (alertDiv && alertDiv.parentNode) {
+      alertDiv.parentNode.removeChild(alertDiv);
+    }
+  }, 5000);
+}
+
+const translations = {
+  en: {
+    title: 'Grade Analysis Dashboard',
+    courseName: 'Course Name',
+    courseCode: 'Course Code',
+    section: 'Section',
+    semester: 'Semester',
+    year: 'Year',
+    importGrades: 'Import Grades from Excel',
+    exportPDF: 'Export PDF Report',
+    gradesInput: 'Enter Grades (separated by spaces or commas)',
+    highGrades: 'High Grades',
+    moderateGrades: 'Moderate Grades',
+    lowGrades: 'Low Grades',
+    absenceGrades: 'Absence/Incomplete',
+    comments: 'Additional Comments',
+    inflationAnalysis: 'Grade Inflation Analysis',
+    highInflation: 'High Grades Inflation',
+    lowInflation: 'Low Grades Inflation',
+    noInflation: 'No Grade Inflation Detected',
+    nearInflation: 'Near Inflation Level',
+    totalStudents: 'Total Students',
+    invalidGrades: 'Invalid grades found',
+    footer: 'Copyright Reserved for Ayman Saleh, College of Sharia, Qatar University',
+    grade: 'Grade',
+    count: 'Count',
+    total: 'Total',
+    autumn: 'Autumn',
+    spring: 'Spring',
+    summer: 'Summer',
+    winter: 'Winter',
+    gradeAnalysis: 'Grade Analysis'
+  },
+  ar: {
+    title: 'لوحة تحليل الدرجات',
+    courseName: 'اسم المقرر',
+    courseCode: 'رمز المقرر',
+    section: 'الشعبة',
+    semester: 'الفصل الدراسي',
+    year: 'السنة',
+    importGrades: 'استيراد الدرجات من ملف بلاكبورد',
+    exportPDF: 'تصدير تقرير PDF',
+    gradesInput: 'أدخل الدرجات (مفصولة بمسافات أو فواصل)',
+    highGrades: 'الدرجات المرتفعة',
+    moderateGrades: 'الدرجات المتوسطة',
+    lowGrades: 'الدرجات المنخفضة',
+    absenceGrades: 'حالات الغياب وعدم الاكتمال',
+    comments: 'ملاحظات إضافية',
+    inflationAnalysis: 'تحليل تضخم الدرجات',
+    highInflation: 'تضخم الدرجات المرتفعة',
+    lowInflation: 'تضخم الدرجات المنخفضة',
+    noInflation: 'لا يوجد تضخم في الدرجات',
+    nearInflation: 'قريب من مستوى التضخم',
+    totalStudents: 'إجمالي الطلاب',
+    invalidGrades: 'تم العثور على درجات غير صالحة',
+    footer: 'حقوق النشر محفوظة، أيمن صالح، كلية الشريعة، جامعة قطر',
+    grade: 'الدرجة',
+    count: 'العدد',
+    total: 'المجموع',
+    autumn: 'خريف',
+    spring: 'ربيع',
+    summer: 'صيف',
+    winter: 'شتاء',
+    gradeAnalysis: 'تحليل الدرجات'
+  }
+};
+
+// Initialize the application
+function init() {
+  renderApp();
+  setupEventListeners();
+  updateFooter();
+}
+
+// Toggle language
+function toggleLanguage() {
+  state.language = state.language === 'en' ? 'ar' : 'en';
+  document.body.classList.toggle('rtl', state.language === 'ar');
+  document.getElementById('langText').textContent = state.language === 'en' ? 'العربية' : 'English';
+  renderApp();
+  updateFooter();
+}
+
+// Get semester options
+function getSemesterOptions() {
+  const t = translations[state.language];
+  const currentMonth = new Date().getMonth();
+  let defaultSemester;
+
+  // Determine current semester
+  if (currentMonth >= 8 && currentMonth <= 11) defaultSemester = 'autumn';
+  else if (currentMonth >= 0 && currentMonth <= 3) defaultSemester = 'spring';
+  else if (currentMonth >= 4 && currentMonth <= 7) defaultSemester = 'summer';
+
+  const semesters = ['autumn', 'spring', 'summer', 'winter'];
+
+  return semesters.map(sem => `
+    <option value="${sem}" ${sem === defaultSemester ? 'selected' : ''}>
+      ${t[sem]}
+    </option>
+  `).join('');
+}
+
+// Move updateChart function definition before renderApp
+function updateChart() {
+  try {
+    const canvas = document.getElementById('gradeChart');
+    if (!canvas) {
+      console.warn('Chart canvas not found');
+      return;
+    }
+
+    if (gradeChart) {
+      gradeChart.destroy();
+    }
+
+    const ctx = canvas.getContext('2d');
+    const t = translations[state.language];
+
+    // Define all possible grades in order
+    const allGrades = ['A', 'B+', 'B', 'C+', 'C', 'D+', 'D', 'F', 'FA', 'FB', 'I', 'AV'];
+    
+    // Count occurrences of each grade
+    const gradeCounts = allGrades.map(grade => {
+      return state.grades.filter(g => g.toUpperCase() === grade).length;
+    });
+
+    // Define colors for different grade categories
+    const colors = allGrades.map(grade => {
+      if (['A', 'B+', 'B'].includes(grade)) return 'rgba(40, 167, 69, 0.6)';  // Green for high grades
+      if (['C+', 'C'].includes(grade)) return 'rgba(255, 193, 7, 0.6)';       // Yellow for moderate grades
+      if (['D+', 'D', 'F'].includes(grade)) return 'rgba(220, 53, 69, 0.6)';  // Red for low grades
+      return 'rgba(108, 117, 125, 0.6)';                                      // Gray for absence/incomplete
+    });
+
+    // Create new chart
+    gradeChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: allGrades,
+        datasets: [{
+          label: t.gradeAnalysis,
+          data: gradeCounts,
+          backgroundColor: colors,
+          borderColor: colors.map(color => color.replace('0.6', '1')),
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false
+          },
+          title: {
+            display: true,
+            text: t.gradeAnalysis,
+            font: {
+              family: 'Cairo',
+              size: 16
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: t.count,
+              font: {
+                family: 'Tajawal'
+              }
+            },
+            ticks: {
+              stepSize: 1
+            }
+          },
+          x: {
+            title: {
+              display: true,
+              text: t.grade,
+              font: {
+                family: 'Tajawal'
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Update canvas direction based on language
+    canvas.dir = state.language === 'ar' ? 'rtl' : 'ltr';
+  } catch (err) {
+    console.error('Error updating chart:', err);
+    showAlert('error', 'Error updating grade chart');
+  }
+}
+
+function renderApp() {
+  const t = translations[state.language];
+  const mainContent = document.getElementById('mainContent');
+
+  mainContent.innerHTML = `
+    <h1>${t.title}</h1>
+    
+    <div class="form-group">
+      <label for="courseName">${t.courseName}</label>
+      <input type="text" id="courseName" class="form-control" value="${state.courseData.name}">
+    </div>
+
+    <div class="form-group">
+      <label for="courseCode">${t.courseCode}</label>
+      <input type="text" id="courseCode" class="form-control" value="${state.courseData.code}">
+    </div>
+
+    <div class="form-group">
+      <label for="section">${t.section}</label>
+      <input type="text" id="section" class="form-control" value="${state.courseData.section}">
+    </div>
+
+    <div class="form-group">
+      <label for="semester">${t.semester}</label>
+      <select id="semester" class="form-control">
+        ${getSemesterOptions()}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="year">${t.year}</label>
+      <input type="number" id="year" class="form-control" value="${state.courseData.year}">
+    </div>
+
+    <div class="form-group">
+      <label for="gradesInput">${t.gradesInput}</label>
+      <textarea id="gradesInput" class="form-control" rows="5">${state.grades.join(', ')}</textarea>
+    </div>
+
+    <div class="form-group">
+      <button onclick="importExcel()" class="btn">${t.importGrades}</button>
+      <button onclick="exportPDF()" class="btn">${t.exportPDF}</button>
+    </div>
+    
+    <div id="gradesAnalysis" class="grades-grid">
+      <!-- Grade analysis tables will be inserted here -->
+    </div>
+    
+    <div class="chart-container">
+      <canvas id="gradeChart"></canvas>
+    </div>
+    
+    <div class="form-group">
+      <label for="comments">${t.comments}</label>
+      <textarea id="comments" class="form-control">${state.comments}</textarea>
+    </div>
+  `;
+  
+  updateGradeAnalysis();
+  updateChart();
+  updateInflationAnalysis();
+}
+
+// Analyze inflation
+function analyzeInflation() {
+  const validGrades = state.grades.filter(g => !['FA', 'FB', 'I', 'AV'].includes(g.toUpperCase()));
+  const totalValid = validGrades.length;
+
+  if (totalValid === 0) return { high: 0, low: 0 };
+
+  const highGrades = validGrades.filter(g => ['A', 'B+', 'B'].includes(g.toUpperCase())).length;
+  const lowGrades = validGrades.filter(g => ['D+', 'D', 'F'].includes(g.toUpperCase())).length;
+
+  return {
+    high: (highGrades / totalValid) * 100,
+    low: (lowGrades / totalValid) * 100
+  };
+}
+
+// Update inflation analysis
+function updateInflationAnalysis() {
+  const t = translations[state.language];
+  const { high, low } = analyzeInflation();
+
+  const inflationDiv = document.createElement('div');
+  inflationDiv.className = 'inflation-analysis';
+
+  let highClass = high >= 50 ? 'alert-danger' : high >= 45 ? 'alert-warning' : 'alert-success';
+  let lowClass = low >= 50 ? 'alert-danger' : low >= 45 ? 'alert-warning' : 'alert-success';
+
+  inflationDiv.innerHTML = `
+    <h3>${t.inflationAnalysis}</h3>
+    <div class="alert ${highClass}">
+      ${t.highInflation}: ${high.toFixed(1)}%
+    </div>
+    <div class="alert ${lowClass}">
+      ${t.lowInflation}: ${low.toFixed(1)}%
+    </div>
+  `;
+
+  const analysisSection = document.getElementById('gradesAnalysis');
+  analysisSection.appendChild(inflationDiv);
+}
+
+// Import Excel file
+async function importExcel() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.xls,.xlsx';
+
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+
+    reader.onload = async (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, {type: 'array'});
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+        // Find BANNER GRADE column
+        const gradeColumn = Object.keys(jsonData[0]).find(key => 
+          key.toUpperCase().includes('BANNER GRADE'));
+          
+        if (!gradeColumn) {
+          throw new Error('BANNER GRADE column not found');
+        }
+        
+        // Extract grades
+        state.grades = jsonData.map(row => row[gradeColumn])
+          .filter(grade => grade && typeof grade === 'string');
+          
+        updateGradeAnalysis();
+        updateChart();
+        updateInflationAnalysis();
+        
+        showAlert('success', 'Grades imported successfully');
+      } catch (error) {
+        console.error('Error importing Excel:', error);
+        showAlert('error', 'Error importing Excel file');
+      }
+    };
+    
+    reader.readAsArrayBuffer(file);
+  };
+  
+  input.click();
+}
+
+// Export PDF report
+async function exportPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4'
+  });
+
+  const t = translations[state.language];
+  const isRTL = state.language === 'ar';
+  
+  // Set RTL if Arabic
+  if (isRTL) {
+    doc.setR2L(true);
+  }
+
+  // Add Qatar University logo
+  // Using SVG path for logo
+  const logoSvg = `<svg width="200" height="100">
+    <path d="M20,50 Q50,20 80,50 T140,50" fill="none" stroke="#8A1538" stroke-width="3"/>
+    <text x="50" y="70" font-family="Cairo" fill="#8A1538">Qatar University</text>
+  </svg>`;
+  
+  // Convert SVG to data URL
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const DOMURL = window.URL || window.webkitURL || window;
+  const img = new Image();
+  const svg = new Blob([logoSvg], {type: 'image/svg+xml;charset=utf-8'});
+  const url = DOMURL.createObjectURL(svg);
+  
+  // Add content to PDF
+  doc.setFontSize(18);
+  doc.text(t.title, isRTL ? 200 : 10, 20);
+
+  // Course information
+  doc.setFontSize(12);
+  const courseInfo = [
+    `${t.courseName}: ${state.courseData.name}`,
+    `${t.courseCode}: ${state.courseData.code}`,
+    `${t.section}: ${state.courseData.section}`,
+    `${t.semester}: ${state.courseData.semester}`,
+    `${t.year}: ${state.courseData.year}`
+  ];
+
+  courseInfo.forEach((info, index) => {
+    doc.text(info, isRTL ? 200 : 10, 40 + (index * 7));
+  });
+
+  // Add grade distribution chart
+  const chartCanvas = document.getElementById('gradeChart');
+  const chartImg = chartCanvas.toDataURL('image/png');
+  doc.addImage(chartImg, 'PNG', 10, 80, 190, 100);
+
+  // Add tables
+  // Create simplified tables for PDF
+  const gradeCategories = [
+    { grades: ['A', 'B+', 'B'], title: t.highGrades },
+    { grades: ['C+', 'C'], title: t.moderateGrades },
+    { grades: ['D+', 'D', 'F'], title: t.lowGrades },
+    { grades: ['FA', 'FB', 'I', 'AV'], title: t.absenceGrades }
+  ];
+
+  let yPos = 190;
+  gradeCategories.forEach(category => {
+    doc.setFontSize(14);
+    doc.text(category.title, isRTL ? 200 : 10, yPos);
+    yPos += 10;
+
+    // Add grade counts
+    const counts = category.grades.map(grade => {
+      const count = state.grades.filter(g => g.toUpperCase() === grade).length;
+      return `${grade}: ${count}`;
+    });
+
+    doc.setFontSize(12);
+    counts.forEach(count => {
+      doc.text(count, isRTL ? 190 : 20, yPos);
+      yPos += 7;
+    });
+    yPos += 5;
+  });
+
+  // Add inflation analysis
+  const { high, low } = analyzeInflation();
+  doc.setFontSize(14);
+  doc.text(t.inflationAnalysis, isRTL ? 200 : 10, yPos);
+  yPos += 10;
+  doc.setFontSize(12);
+  doc.text(`${t.highInflation}: ${high.toFixed(1)}%`, isRTL ? 190 : 20, yPos);
+  yPos += 7;
+  doc.text(`${t.lowInflation}: ${low.toFixed(1)}%`, isRTL ? 190 : 20, yPos);
+
+  // Save the PDF
+  const filename = `${state.courseData.code}_${state.courseData.section}_${t.gradeAnalysis}.pdf`;
+  doc.save(filename);
+}
+
+// Update grade analysis tables
+function updateGradeAnalysis() {
+  const t = translations[state.language];
+  const analysisDiv = document.getElementById('gradesAnalysis');
+  analysisDiv.innerHTML = ''; // Clear existing content
+
+  // Helper function to create grade tables
+  function createGradeTable(title, grades, colorClass) {
+    const validGrades = state.grades.filter(g => grades.includes(g.toUpperCase()));
+    const total = state.grades.length;
+    const percentage = total ? ((validGrades.length / total) * 100).toFixed(1) : 0;
+
+    return `
+      <div class="grade-table ${colorClass}">
+        <h3>${title}</h3>
+        <table style="width: 100%">
+          <tr>
+            <th>${t.grade}</th>
+            <th>${t.count}</th>
+            <th>%</th>
+          </tr>
+          ${grades.map(grade => {
+            const count = state.grades.filter(g => g.toUpperCase() === grade).length;
+            const gradePercentage = total ? ((count / total) * 100).toFixed(1) : 0;
+            return `
+              <tr>
+                <td>${grade}</td>
+                <td>${count}</td>
+                <td>${gradePercentage}%</td>
+              </tr>
+            `;
+          }).join('')}
+          <tr style="font-weight: bold">
+            <td>${t.total}</td>
+            <td>${validGrades.length}</td>
+            <td>${percentage}%</td>
+          </tr>
+        </table>
+      </div>
+    `;
+  }
+
+  // Create all grade tables
+  analysisDiv.innerHTML = `
+    ${createGradeTable(t.highGrades, ['A', 'B+', 'B'], 'high')}
+    ${createGradeTable(t.moderateGrades, ['C+', 'C'], 'moderate')}
+    ${createGradeTable(t.lowGrades, ['D+', 'D', 'F'], 'low')}
+    ${createGradeTable(t.absenceGrades, ['FA', 'FB', 'I', 'AV'], 'absence')}
+  `;
+}
+
+// Show alert message
+function showAlert(type, message) {
+  const alertDiv = document.createElement('div');
+  alertDiv.className = `alert alert-${type}`;
+  alertDiv.textContent = message;
+  
+  const mainContent = document.getElementById('mainContent');
+  if (!mainContent) return;
+  
+  const firstChild = mainContent.firstChild;
+  if (firstChild) {
+    mainContent.insertBefore(alertDiv, firstChild);
+  } else {
+    mainContent.appendChild(alertDiv);
+  }
+  
+  setTimeout(() => {
+    if (alertDiv && alertDiv.parentNode) {
+      alertDiv.parentNode.removeChild(alertDiv);
+    }
+  }, 5000);
+}
+
+// Update footer
+function updateFooter() {
+  const footer = document.getElementById('footer');
+  footer.textContent = `${translations[state.language].footer} ${new Date().getFullYear()}`;
+}
+
+// Setup event listeners
+function setupEventListeners() {
+  // Remove any existing listeners first
+  const gradesInput = document.getElementById('gradesInput');
+  if (gradesInput) {
+    const newGradesInput = gradesInput.cloneNode(true);
+    gradesInput.parentNode.replaceChild(newGradesInput, gradesInput);
+    
+    newGradesInput.addEventListener('change', function(e) {
+      const grades = e.target.value
+        .split(/[\s,]+/)
+        .map(g => g.trim().toUpperCase())
+        .filter(g => g);
+        
+      const validGrades = ['A', 'B+', 'B', 'C+', 'C', 'D+', 'D', 'F', 'FA', 'FB', 'I', 'AV'];
+      const invalidGrades = grades.filter(g => !validGrades.includes(g));
+      
+      if (invalidGrades.length > 0) {
+        showAlert('error', `${translations[state.language].invalidGrades}: ${invalidGrades.join(', ')}`);
+        return;
+      }
+      
+      state.grades = grades;
+      updateGradeAnalysis();
+      updateChart();
+      updateInflationAnalysis();
+    });
+  }
+  
+  // Same for other form fields
+  ['courseName', 'courseCode', 'section', 'semester', 'year'].forEach(id => {
+    const element = document.getElementById(id);
+    if (element) {
+      const newElement = element.cloneNode(true);
+      element.parentNode.replaceChild(newElement, element);
+      
+      newElement.addEventListener('change', function(e) {
+        state.courseData[id] = e.target.value;
+      });
+    }
+  });
+}
+
+// Merge the additional translations
+const additionalTranslations = {
+  en: {
+    grade: 'Grade',
+    count: 'Count',
+    total: 'Total',
+    autumn: 'Autumn',
+    spring: 'Spring',
+    summer: 'Summer',
+    winter: 'Winter',
+    gradeAnalysis: 'Grade Analysis'
+  },
+  ar: {
+    grade: 'الدرجة',
+    count: 'العدد',
+    total: 'المجموع',
+    autumn: 'خريف',
+    spring: 'ربيع',
+    summer: 'صيف',
+    winter: 'شتاء',
+    gradeAnalysis: 'تحليل الدرجات'
+  }
+};
+
+// Merge the additional translations
+Object.keys(additionalTranslations).forEach(lang => {
+  translations[lang] = { ...translations[lang], ...additionalTranslations[lang] };
+});
+
+// Initialize the application
+document.addEventListener('DOMContentLoaded', function() {
+  init();
+});
+</script>
+</body>
+</html>
